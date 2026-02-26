@@ -13,14 +13,14 @@
 
 ## 一键安装
 
+国内服务器：
 ```bash
-bash <(curl -sL https://raw.githubusercontent.com/Assute/backup_manager/main/backup_manager.sh)
+bash <(curl -sL https://gitee.com/Assute/backup_manager/raw/main/backup_manager.sh)
 ```
 
-或者使用 wget：
-
+国外服务器：
 ```bash
-bash <(wget -qO- https://raw.githubusercontent.com/Assute/backup_manager/main/backup_manager.sh)
+bash <(curl -sL https://raw.githubusercontent.com/Assute/backup_manager/main/backup_manager.sh)
 ```
 
 ## 使用方法
