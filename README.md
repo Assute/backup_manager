@@ -15,7 +15,7 @@
 
 国内服务器：
 ```bash
-bash <(curl -sL https://gitee.com/Assute/backup_manager/raw/main/backup_manager.sh)
+bash <(curl -sL https://gitee.com/Assute/backup_manager/raw/master/backup_manager.sh)
 ```
 
 国外服务器：
