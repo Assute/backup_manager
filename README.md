@@ -71,4 +71,6 @@ bash <(curl -sL https://raw.githubusercontent.com/Assute/backup_manager/main/bac
 
 ## License
 
-MIT
+CC BY-NC-SA 4.0（知识共享 署名-非商业性使用-相同方式共享 4.0）
+
+**禁止商业用途** - 详见 [LICENSE](./LICENSE) 文件
