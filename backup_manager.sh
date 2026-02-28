@@ -1,8 +1,9 @@
 #!/bin/bash
 
 # ================================================
-# 备份管理工具 v2.0
+# 备份管理工具 v3.0
 # 功能: 添加/修改/删除Rsync备份任务, 定时管理
+# 新增: 远程自动检测安装rsync，快捷指令bf
 # ================================================
 
 # 脚本所在目录
@@ -209,8 +210,47 @@ fi
 # 记录开始日志
 echo "\$(date '+%Y-%m-%d %H:%M:%S') - 开始备份 \$SOURCE_FOLDER → \$USERNAME@\$HOST:\$PORT:\$DEST_FOLDER" >> "\$LOG_FILE"
 
-# 使用 rsync + sshpass 进行增量备份
+# ===== 检测和安装远程 rsync ====
+echo "\$(date '+%Y-%m-%d %H:%M:%S') - 检查远程 rsync..." >> "\$LOG_FILE"
 export SSHPASS="\$PASSWORD"
+
+# 检查远程是否安装了 rsync
+sshpass -e ssh -p \$PORT -o StrictHostKeyChecking=no "\$USERNAME@\$HOST" "command -v rsync" &>/dev/null
+if [ \$? -ne 0 ]; then
+    echo "\$(date '+%Y-%m-%d %H:%M:%S') - 远程未安装 rsync，正在安装..." >> "\$LOG_FILE"
+
+    # 检测远程包管理器并安装 rsync
+    sshpass -e ssh -p \$PORT -o StrictHostKeyChecking=no "\$USERNAME@\$HOST" << 'REMOTE_INSTALL'
+if command -v apt-get &>/dev/null; then
+    apt-get update -qq && apt-get install -y rsync &>/dev/null
+elif command -v yum &>/dev/null; then
+    yum install -y rsync &>/dev/null
+elif command -v dnf &>/dev/null; then
+    dnf install -y rsync &>/dev/null
+elif command -v apk &>/dev/null; then
+    apk add rsync &>/dev/null
+fi
+REMOTE_INSTALL
+
+    # 再次检查是否安装成功
+    sshpass -e ssh -p \$PORT -o StrictHostKeyChecking=no "\$USERNAME@\$HOST" "command -v rsync" &>/dev/null
+    if [ \$? -eq 0 ]; then
+        echo "\$(date '+%Y-%m-%d %H:%M:%S') - 远程 rsync 安装成功" >> "\$LOG_FILE"
+    else
+        echo "\$(date '+%Y-%m-%d %H:%M:%S') - 远程 rsync 安装失败，请手动检查" >> "\$LOG_FILE"
+        unset SSHPASS
+        exit 1
+    fi
+else
+    echo "\$(date '+%Y-%m-%d %H:%M:%S') - 远程已安装 rsync" >> "\$LOG_FILE"
+fi
+
+# 检查并创建远程目标目录
+echo "\$(date '+%Y-%m-%d %H:%M:%S') - 检查远程目录..." >> "\$LOG_FILE"
+sshpass -e ssh -p \$PORT -o StrictHostKeyChecking=no "\$USERNAME@\$HOST" "mkdir -p \"\$DEST_FOLDER\" && chmod 755 \"\$DEST_FOLDER\"" &>/dev/null
+
+# ===== 执行 rsync 备份 =====
+echo "\$(date '+%Y-%m-%d %H:%M:%S') - 开始传输文件..." >> "\$LOG_FILE"
 sshpass -e rsync -avz --progress \\
     -e "ssh -p \$PORT -o StrictHostKeyChecking=no" \\
     "\$SOURCE_FOLDER" \\
@@ -546,7 +586,7 @@ do_modify_schedule() {
 show_menu() {
     echo ""
     echo -e "${BLUE}╔═══════════════════════════╗${NC}"
-    echo -e "${BLUE}║  ${CYAN}Rsync 备份管理工具 v2.0${BLUE}  ║${NC}"
+    echo -e "${BLUE}║  ${CYAN}Rsync 备份管理工具 v3.0${BLUE}  ║${NC}"
     echo -e "${BLUE}╠═══════════════════════════╣${NC}"
     echo -e "${BLUE}║                           ║${NC}"
     echo -e "${BLUE}║  ${GREEN}1.${NC} 添加备份              ${BLUE}║${NC}"
@@ -571,6 +611,18 @@ main() {
 
     # 检查并安装依赖
     check_dependencies
+
+    # 自动设置快捷指令 bf
+    echo -e "${CYAN}[*] 正在设置快捷指令...${NC}"
+    sudo bash -c 'cat > /usr/local/bin/bf << "EOF"
+#!/bin/bash
+sudo bash /opt/backup/backup_manager.sh "$@"
+EOF
+chmod +x /usr/local/bin/bf' 2>/dev/null
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}[✔] 快捷指令 'bf' 已设置！使用 ${YELLOW}bf${GREEN} 命令快速打开菜单${NC}"
+        echo ""
+    fi
 
     # 主循环
     while true; do
