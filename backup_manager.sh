@@ -1,14 +1,14 @@
 #!/bin/bash
 
 # ================================================
-# 备份管理工具 v1.0
-# 功能: 添加/修改/删除SCP备份任务, 定时管理
+# 备份管理工具 v2.0
+# 功能: 添加/修改/删除Rsync备份任务, 定时管理
 # ================================================
 
 # 脚本所在目录
 SCRIPT_BASE_DIR="/opt/backup"
 CONFIG_DIR="${SCRIPT_BASE_DIR}/backup_configs"
-EXPECT_DIR="${SCRIPT_BASE_DIR}/backup_scripts"
+SCRIPT_DIR="${SCRIPT_BASE_DIR}/backup_scripts"
 LOG_DIR="${SCRIPT_BASE_DIR}/backup_logs"
 
 # 颜色定义
@@ -25,18 +25,18 @@ check_dependencies() {
     echo -e "${CYAN}[*] 正在检查依赖模块...${NC}"
     local missing=()
 
-    # 检查 expect
-    if ! command -v expect &>/dev/null; then
-        missing+=("expect")
+    # 检查 rsync
+    if ! command -v rsync &>/dev/null; then
+        missing+=("rsync")
     else
-        echo -e "  ${GREEN}✔ expect 已安装${NC}"
+        echo -e "  ${GREEN}✔ rsync 已安装${NC}"
     fi
 
-    # 检查 scp (openssh)
-    if ! command -v scp &>/dev/null; then
-        missing+=("scp")
+    # 检查 sshpass
+    if ! command -v sshpass &>/dev/null; then
+        missing+=("sshpass")
     else
-        echo -e "  ${GREEN}✔ scp 已安装${NC}"
+        echo -e "  ${GREEN}✔ sshpass 已安装${NC}"
     fi
 
     # 检查 crontab
@@ -68,12 +68,11 @@ check_dependencies() {
         for dep in "${missing[@]}"; do
             echo -e "${CYAN}  → 安装 ${dep}...${NC}"
             case "$dep" in
-                expect)
-                    $pkg_cmd install -y expect &>/dev/null
+                rsync)
+                    $pkg_cmd install -y rsync &>/dev/null
                     ;;
-                scp)
-                    $pkg_cmd install -y openssh-clients &>/dev/null || \
-                    $pkg_cmd install -y openssh-client &>/dev/null
+                sshpass)
+                    $pkg_cmd install -y sshpass &>/dev/null
                     ;;
                 cron)
                     if [ "$pkg_cmd" = "apt-get" ]; then
@@ -88,9 +87,9 @@ check_dependencies() {
 
             # 验证安装结果
             case "$dep" in
-                expect) command -v expect &>/dev/null && echo -e "  ${GREEN}✔ expect 安装成功${NC}" || echo -e "  ${RED}✗ expect 安装失败${NC}" ;;
-                scp)    command -v scp &>/dev/null    && echo -e "  ${GREEN}✔ scp 安装成功${NC}"    || echo -e "  ${RED}✗ scp 安装失败${NC}" ;;
-                cron)   command -v crontab &>/dev/null && echo -e "  ${GREEN}✔ crontab 安装成功${NC}" || echo -e "  ${RED}✗ crontab 安装失败${NC}" ;;
+                rsync)   command -v rsync &>/dev/null   && echo -e "  ${GREEN}✔ rsync 安装成功${NC}"   || echo -e "  ${RED}✗ rsync 安装失败${NC}" ;;
+                sshpass) command -v sshpass &>/dev/null && echo -e "  ${GREEN}✔ sshpass 安装成功${NC}" || echo -e "  ${RED}✗ sshpass 安装失败${NC}" ;;
+                cron)    command -v crontab &>/dev/null && echo -e "  ${GREEN}✔ crontab 安装成功${NC}" || echo -e "  ${RED}✗ crontab 安装失败${NC}" ;;
             esac
         done
     fi
@@ -104,7 +103,7 @@ check_dependencies() {
     fi
 
     # 创建必要目录
-    mkdir -p "$CONFIG_DIR" "$EXPECT_DIR" "$LOG_DIR"
+    mkdir -p "$CONFIG_DIR" "$SCRIPT_DIR" "$LOG_DIR"
 
     echo -e "${GREEN}[✔] 依赖检查完成！${NC}"
     echo ""
@@ -136,7 +135,6 @@ list_backups() {
 
     local i=1
     for conf in "${CONFIG_LIST[@]}"; do
-        # 用子shell读取，避免污染当前环境
         eval "$(grep -E '^(BACKUP_NAME|SOURCE_FOLDER|USERNAME|HOST|PORT|DEST_FOLDER|INTERVAL)=' "$conf")"
         PORT=${PORT:-22}
         printf "  %-4s %-15s %-25s %-10s %-28s %s分钟\n" \
@@ -174,86 +172,71 @@ make_cron_schedule() {
     fi
 }
 
-# 生成 expect 备份脚本
-generate_expect_script() {
+# 生成 rsync 备份脚本
+generate_backup_script() {
     local name="$1"
     eval "$(grep -E '^(SOURCE_FOLDER|USERNAME|HOST|PORT|DEST_FOLDER|PASSWORD)=' "$CONFIG_DIR/${name}.conf")"
     PORT=${PORT:-22}
     local log_file="${LOG_DIR}/${name}.log"
 
-    cat > "$EXPECT_DIR/${name}.sh" << 'HEADER'
-#!/usr/bin/expect -f
-HEADER
+    cat > "$SCRIPT_DIR/${name}.sh" << 'EOF'
+#!/bin/bash
+EOF
 
-    cat >> "$EXPECT_DIR/${name}.sh" << EOF
+    cat >> "$SCRIPT_DIR/${name}.sh" << SCRIPT
 
 # 备份任务: ${name}
 # 自动生成，请勿手动修改
 
-set source_folder "${SOURCE_FOLDER}"
-set username "${USERNAME}"
-set host "${HOST}"
-set port "${PORT}"
-set destination_folder "${DEST_FOLDER}"
-set password "${PASSWORD}"
-set log_file "${log_file}"
+SOURCE_FOLDER="${SOURCE_FOLDER}"
+USERNAME="${USERNAME}"
+HOST="${HOST}"
+PORT="${PORT}"
+DEST_FOLDER="${DEST_FOLDER}"
+PASSWORD="${PASSWORD}"
+LOG_FILE="${log_file}"
 
-set timeout 3600
-set max_log_size 5242880
+MAX_LOG_SIZE=5242880
 
 # 日志大小检查，超过5MB则清空
-proc check_log_size {log_file max_size} {
-    if {[file exists \$log_file]} {
-        set fsize [file size \$log_file]
-        if {\$fsize > \$max_size} {
-            set fd [open \$log_file w]
-            set ts [clock format [clock seconds] -format "%Y-%m-%d %H:%M:%S"]
-            puts \$fd "\$ts - 日志已超过5MB，自动清空"
-            close \$fd
-        }
-    }
-}
+if [ -f "\$LOG_FILE" ]; then
+    fsize=\$(stat -c%s "\$LOG_FILE" 2>/dev/null || stat -f%z "\$LOG_FILE" 2>/dev/null || echo 0)
+    if [ "\$fsize" -gt "\$MAX_LOG_SIZE" ]; then
+        echo "\$(date '+%Y-%m-%d %H:%M:%S') - 日志已超过5MB，自动清空" > "\$LOG_FILE"
+    fi
+fi
 
-# 记录日志
-check_log_size \$log_file \$max_log_size
-set timestamp [clock format [clock seconds] -format "%Y-%m-%d %H:%M:%S"]
-set log_fd [open \$log_file a]
-puts \$log_fd "\$timestamp - 开始备份 \$source_folder → \$username@\$host:\$port:\$destination_folder"
-close \$log_fd
+# 记录开始日志
+echo "\$(date '+%Y-%m-%d %H:%M:%S') - 开始备份 \$SOURCE_FOLDER → \$USERNAME@\$HOST:\$PORT:\$DEST_FOLDER" >> "\$LOG_FILE"
 
-# 判断是文件还是文件夹，文件夹用 -r 参数
-if {[file isdirectory \$source_folder]} {
-    spawn scp -P \$port -r \$source_folder \$username@\$host:\$destination_folder
-} else {
-    spawn scp -P \$port \$source_folder \$username@\$host:\$destination_folder
-}
+# 使用 rsync + sshpass 进行增量备份
+export SSHPASS="\$PASSWORD"
+sshpass -e rsync -avz --progress \\
+    -e "ssh -p \$PORT -o StrictHostKeyChecking=no" \\
+    "\$SOURCE_FOLDER" \\
+    "\$USERNAME@\$HOST:\$DEST_FOLDER" \\
+    >> "\$LOG_FILE" 2>&1
 
-expect {
-    -re ".*yes/no.*" {send "yes\r"; exp_continue}
-    -re ".*password:.*" {send "\$password\r"; exp_continue}
-    timeout {
-        set log_fd [open \$log_file a]
-        puts \$log_fd "\$timestamp - 备份超时"
-        close \$log_fd
-        exit 1
-    }
-    eof
-}
+RESULT=\$?
 
-set timestamp [clock format [clock seconds] -format "%Y-%m-%d %H:%M:%S"]
-set log_fd [open \$log_file a]
-puts \$log_fd "\$timestamp - 备份完成"
-close \$log_fd
-EOF
+if [ \$RESULT -eq 0 ]; then
+    echo "\$(date '+%Y-%m-%d %H:%M:%S') - 备份完成" >> "\$LOG_FILE"
+else
+    echo "\$(date '+%Y-%m-%d %H:%M:%S') - 备份失败 (退出码: \$RESULT)" >> "\$LOG_FILE"
+fi
 
-    chmod +x "$EXPECT_DIR/${name}.sh"
+unset SSHPASS
+exit \$RESULT
+SCRIPT
+
+    chmod +x "$SCRIPT_DIR/${name}.sh"
 }
 
 # 添加 cron 定时任务
 add_cron_job() {
     local name="$1"
     local interval="$2"
-    local script_path="$EXPECT_DIR/${name}.sh"
+    local script_path="$SCRIPT_DIR/${name}.sh"
     local schedule
     schedule=$(make_cron_schedule "$interval")
 
@@ -273,7 +256,7 @@ remove_cron_job() {
 # 添加开机自启任务
 add_startup_job() {
     local name="$1"
-    local script_path="$EXPECT_DIR/${name}.sh"
+    local script_path="$SCRIPT_DIR/${name}.sh"
 
     remove_startup_job "$name"
     (crontab -l 2>/dev/null; echo "@reboot sleep 30 && ${script_path} >/dev/null 2>&1 # startup_task_${name}") | crontab -
@@ -379,8 +362,8 @@ INTERVAL="${interval}"
 EOF
     chmod 600 "$CONFIG_DIR/${backup_name}.conf"
 
-    # 生成 expect 脚本
-    generate_expect_script "$backup_name"
+    # 生成 rsync 备份脚本
+    generate_backup_script "$backup_name"
 
     # 添加定时任务
     add_cron_job "$backup_name" "$interval"
@@ -391,7 +374,7 @@ EOF
     # 立即执行一次备份
     echo ""
     echo -e "  ${CYAN}[*] 正在执行首次备份...${NC}"
-    "$EXPECT_DIR/${backup_name}.sh"
+    "$SCRIPT_DIR/${backup_name}.sh"
     if [ $? -eq 0 ]; then
         echo -e "  ${GREEN}[✔] 首次备份完成！${NC}"
     else
@@ -468,8 +451,8 @@ INTERVAL="${new_interval}"
 EOF
     chmod 600 "$conf"
 
-    # 重新生成 expect 脚本
-    generate_expect_script "$BACKUP_NAME"
+    # 重新生成 rsync 备份脚本
+    generate_backup_script "$BACKUP_NAME"
 
     # 更新定时任务
     add_cron_job "$BACKUP_NAME" "$new_interval"
@@ -506,7 +489,7 @@ do_delete_backup() {
 
     # 删除配置和脚本
     rm -f "$conf"
-    rm -f "$EXPECT_DIR/${BACKUP_NAME}.sh"
+    rm -f "$SCRIPT_DIR/${BACKUP_NAME}.sh"
     rm -f "$LOG_DIR/${BACKUP_NAME}.log"
 
     echo -e "  ${GREEN}[✔] 备份任务 [${BACKUP_NAME}] 已删除！${NC}"
@@ -562,17 +545,17 @@ do_modify_schedule() {
 
 show_menu() {
     echo ""
-    echo -e "${BLUE}╔════════════════════════════════╗${NC}"
-    echo -e "${BLUE}║     ${CYAN}SCP 备份管理工具 v1.0${BLUE}      ║${NC}"
-    echo -e "${BLUE}╠════════════════════════════════╣${NC}"
-    echo -e "${BLUE}║                                ║${NC}"
-    echo -e "${BLUE}║  ${GREEN}1.${NC} 添加备份                ${BLUE}║${NC}"
-    echo -e "${BLUE}║  ${GREEN}2.${NC} 修改备份                ${BLUE}║${NC}"
-    echo -e "${BLUE}║  ${GREEN}3.${NC} 删除备份                ${BLUE}║${NC}"
-    echo -e "${BLUE}║  ${GREEN}4.${NC} 修改定时                ${BLUE}║${NC}"
-    echo -e "${BLUE}║  ${RED}0.${NC} 退出脚本                ${BLUE}║${NC}"
-    echo -e "${BLUE}║                                ║${NC}"
-    echo -e "${BLUE}╚════════════════════════════════╝${NC}"
+    echo -e "${BLUE}╔═══════════════════════════╗${NC}"
+    echo -e "${BLUE}║  ${CYAN}Rsync 备份管理工具 v2.0${BLUE}  ║${NC}"
+    echo -e "${BLUE}╠═══════════════════════════╣${NC}"
+    echo -e "${BLUE}║                           ║${NC}"
+    echo -e "${BLUE}║  ${GREEN}1.${NC} 添加备份              ${BLUE}║${NC}"
+    echo -e "${BLUE}║  ${GREEN}2.${NC} 修改备份              ${BLUE}║${NC}"
+    echo -e "${BLUE}║  ${GREEN}3.${NC} 删除备份              ${BLUE}║${NC}"
+    echo -e "${BLUE}║  ${GREEN}4.${NC} 修改定时              ${BLUE}║${NC}"
+    echo -e "${BLUE}║  ${RED}0.${NC} 退出脚本              ${BLUE}║${NC}"
+    echo -e "${BLUE}║                           ║${NC}"
+    echo -e "${BLUE}╚═══════════════════════════╝${NC}"
     echo ""
 }
 
