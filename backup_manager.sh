@@ -23,7 +23,6 @@ NC='\033[0m'
 # ==================== 依赖检测 ====================
 
 check_dependencies() {
-    echo -e "${CYAN}[*] 正在检查依赖模块...${NC}"
     local missing=()
 
     # 检查 rsync
@@ -612,8 +611,22 @@ main() {
     # 检查并安装依赖
     check_dependencies
 
+    # 确保脚本保存到 /opt/backup/ 目录（支持 bash <(curl ...) 安装方式）
+    if [ ! -f "/opt/backup/backup_manager.sh" ]; then
+        echo -e "${CYAN}[*] 保存脚本到 /opt/backup/...${NC}"
+        # 尝试从脚本源获取（如果通过 curl 管道执行）
+        if [ -n "$BASH_SOURCE" ] && [ -f "$BASH_SOURCE" ]; then
+            cp "$BASH_SOURCE" "/opt/backup/backup_manager.sh"
+        else
+            # 如果无法复制，从 gitee 下载
+            curl -sL https://gitee.com/Assute/backup_manager/raw/master/backup_manager.sh -o "/opt/backup/backup_manager.sh" 2>/dev/null || \
+            curl -sL https://raw.githubusercontent.com/Assute/backup_manager/main/backup_manager.sh -o "/opt/backup/backup_manager.sh" 2>/dev/null
+        fi
+        chmod +x "/opt/backup/backup_manager.sh"
+        echo -e "${GREEN}[✔] 脚本已保存${NC}"
+    fi
+
     # 自动设置快捷指令 bf
-    echo -e "${CYAN}[*] 正在设置快捷指令...${NC}"
     sudo bash -c 'cat > /usr/local/bin/bf << "EOF"
 #!/bin/bash
 sudo bash /opt/backup/backup_manager.sh "$@"

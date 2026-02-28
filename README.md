@@ -2,9 +2,9 @@
 
 ![Backup Manager](https://upload-bbs.miyoushe.com/upload/2026/02/28/363490070/c82aef4f11f8db53bf0fb21c4668da82_4320865895019498286.jpeg)
 
-一个基于 Rsync 的自动备份管理工具，支持增量备份、定时备份、自定义 SSH 端口、开机自启等功能。
+一个基于 Rsync 的自动备份管理工具，支持增量备份、定时备份、自定义 SSH 端口、开机自启、远程自动安装 rsync 等功能。
 
-## 功能特性
+## 功能特性 v3.0
 
 - 添加/修改/删除备份任务
 - 基于 Rsync 增量同步，只传输变化部分，节省带宽
@@ -13,6 +13,8 @@
 - 开机自动执行备份
 - 创建任务时立即执行首次备份
 - 自动安装依赖（rsync、sshpass、cron）
+- **新增 v3.0: 远程服务器自动检测和安装 rsync**
+- **新增 v3.0: 快捷指令 `bf` 一键打开菜单**
 
 ## 一键安装
 
@@ -28,11 +30,23 @@ bash <(curl -sL https://raw.githubusercontent.com/Assute/backup_manager/main/bac
 
 ## 使用方法
 
+运行脚本后会自动设置快捷指令 `bf`，之后可以直接使用：
+
+```bash
+bf
+```
+
+或者直接运行脚本：
+
+```bash
+sudo bash /opt/backup/backup_manager.sh
+```
+
 运行脚本后会显示菜单：
 
 ```
 ╔═══════════════════════════╗
-║  Rsync 备份管理工具 v2.0  ║
+║  Rsync 备份管理工具 v3.0  ║
 ╠═══════════════════════════╣
 ║                           ║
 ║  1. 添加备份              ║
@@ -71,6 +85,18 @@ bash <(curl -sL https://raw.githubusercontent.com/Assute/backup_manager/main/bac
 - Linux 系统（Debian/Ubuntu/CentOS）
 - root 权限
 - 支持的包管理器：apt-get、yum、dnf
+
+## 版本更新
+
+### v3.0 (当前版本)
+- ✨ 新增：远程服务器自动检测和安装 rsync
+- ✨ 新增：快捷指令 `bf` 一键打开菜单（首次运行脚本自动设置）
+- ✨ 新增：远程目标目录自动创建
+
+### v2.0
+- 基础备份管理功能
+- 定时备份和开机自启
+- 依赖自动安装
 
 ## License
 
