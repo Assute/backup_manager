@@ -319,32 +319,22 @@ check_dependencies() {
 
     if ! command -v rsync &>/dev/null; then
         missing+=("rsync")
-    else
-        echo -e "  ${GREEN}✔ rsync 已安装${NC}"
     fi
 
     if ! command -v sshpass &>/dev/null; then
         missing+=("sshpass")
-    else
-        echo -e "  ${GREEN}✔ sshpass 已安装${NC}"
     fi
 
     if ! command -v crontab &>/dev/null; then
         missing+=("cron")
-    else
-        echo -e "  ${GREEN}✔ crontab 已安装${NC}"
     fi
 
     if ! command -v curl &>/dev/null && ! command -v wget &>/dev/null; then
         missing+=("curl")
-    else
-        echo -e "  ${GREEN}✔ 下载工具已安装${NC}"
     fi
 
     if ! command -v openssl &>/dev/null; then
         missing+=("openssl")
-    else
-        echo -e "  ${GREEN}✔ openssl 已安装${NC}"
     fi
 
     if [ ${#missing[@]} -gt 0 ]; then
@@ -406,18 +396,12 @@ check_dependencies() {
         done
     fi
 
-    if systemctl is-active crond &>/dev/null || systemctl is-active cron &>/dev/null; then
-        echo -e "  ${GREEN}✔ cron 服务运行中${NC}"
-    else
+    if ! systemctl is-active crond &>/dev/null && ! systemctl is-active cron &>/dev/null; then
         systemctl start crond &>/dev/null || systemctl start cron &>/dev/null
-        echo -e "  ${YELLOW}✔ cron 服务已启动${NC}"
     fi
 
     ensure_directories
     ensure_secret_key || exit 1
-
-    echo -e "${GREEN}[✔] 依赖检查完成！${NC}"
-    echo ""
 }
 
 check_runtime_dependencies() {
