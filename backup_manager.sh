@@ -84,6 +84,31 @@ validate_positive_integer() {
     [[ "$value" =~ ^[0-9]+$ ]] && [ "$value" -gt 0 ]
 }
 
+format_display_label() {
+    local internal_name="$1"
+    local remark="$2"
+
+    if [ -n "$remark" ]; then
+        printf '%s (%s)' "$remark" "$internal_name"
+    else
+        printf '%s' "$internal_name"
+    fi
+}
+
+generate_internal_name() {
+    local prefix="$1"
+    local target_dir="$2"
+    local candidate=""
+
+    while true; do
+        candidate="${prefix}_$(date '+%Y%m%d_%H%M%S')_$RANDOM"
+        if [ ! -f "${target_dir}/${candidate}.conf" ]; then
+            printf '%s' "$candidate"
+            return 0
+        fi
+    done
+}
+
 download_remote_script() {
     local target_file="$1"
     local success=1
@@ -148,6 +173,7 @@ load_backup_config() {
     [ -f "$conf" ] || return 1
 
     local BACKUP_NAME=""
+    local BACKUP_REMARK=""
     local SOURCE_FOLDER=""
     local DEST_FOLDER=""
     local INTERVAL=""
@@ -163,6 +189,7 @@ load_backup_config() {
     . "$conf" || return 1
 
     LOADED_BACKUP_NAME="$BACKUP_NAME"
+    LOADED_BACKUP_REMARK="$BACKUP_REMARK"
     LOADED_BACKUP_SOURCE_FOLDER="$SOURCE_FOLDER"
     LOADED_BACKUP_DEST_FOLDER="$DEST_FOLDER"
     LOADED_BACKUP_INTERVAL="${INTERVAL:-60}"
@@ -180,6 +207,7 @@ load_server_config() {
     [ -f "$conf" ] || return 1
 
     local SERVER_NAME=""
+    local SERVER_REMARK=""
     local HOST=""
     local PORT=""
     local USERNAME=""
@@ -190,6 +218,7 @@ load_server_config() {
     . "$conf" || return 1
 
     LOADED_SERVER_NAME="$SERVER_NAME"
+    LOADED_SERVER_REMARK="$SERVER_REMARK"
     LOADED_SERVER_HOST="$HOST"
     LOADED_SERVER_PORT="${PORT:-22}"
     LOADED_SERVER_USERNAME="$USERNAME"
@@ -200,11 +229,13 @@ load_server_config() {
 resolve_backup_runtime() {
     local conf="$1"
     RESOLVED_BACKUP_NAME=""
+    RESOLVED_BACKUP_REMARK=""
     RESOLVED_SOURCE_FOLDER=""
     RESOLVED_DEST_FOLDER=""
     RESOLVED_INTERVAL=""
     RESOLVED_SERVER_MODE=""
     RESOLVED_SERVER_NAME=""
+    RESOLVED_SERVER_REMARK=""
     RESOLVED_HOST=""
     RESOLVED_PORT=""
     RESOLVED_USERNAME=""
@@ -215,11 +246,12 @@ resolve_backup_runtime() {
     load_backup_config "$conf" || return 1
 
     RESOLVED_BACKUP_NAME="$LOADED_BACKUP_NAME"
+    RESOLVED_BACKUP_REMARK="$LOADED_BACKUP_REMARK"
     RESOLVED_SOURCE_FOLDER="$LOADED_BACKUP_SOURCE_FOLDER"
     RESOLVED_DEST_FOLDER="$LOADED_BACKUP_DEST_FOLDER"
     RESOLVED_INTERVAL="$LOADED_BACKUP_INTERVAL"
     RESOLVED_SERVER_MODE="$LOADED_BACKUP_SERVER_MODE"
-    RESOLVED_SERVER_NAME="$LOADED_BACKUP_SERVER_NAME"
+        RESOLVED_SERVER_NAME="$LOADED_BACKUP_SERVER_NAME"
 
     if [ "$LOADED_BACKUP_SERVER_MODE" = "profile" ]; then
         local server_file="$SERVER_DIR/${LOADED_BACKUP_SERVER_NAME}.conf"
@@ -233,6 +265,7 @@ resolve_backup_runtime() {
         RESOLVED_USERNAME="$LOADED_SERVER_USERNAME"
         RESOLVED_PASSWORD="$LOADED_SERVER_PASSWORD"
         RESOLVED_PASSWORD_ENC="$LOADED_SERVER_PASSWORD_ENC"
+        RESOLVED_SERVER_REMARK="$LOADED_SERVER_REMARK"
         RESOLVED_SERVER_LABEL="$LOADED_SERVER_NAME"
     else
         RESOLVED_HOST="$LOADED_BACKUP_HOST"
@@ -240,16 +273,18 @@ resolve_backup_runtime() {
         RESOLVED_USERNAME="$LOADED_BACKUP_USERNAME"
         RESOLVED_PASSWORD="$LOADED_BACKUP_PASSWORD"
         RESOLVED_PASSWORD_ENC="$LOADED_BACKUP_PASSWORD_ENC"
+        RESOLVED_SERVER_REMARK=""
         RESOLVED_SERVER_LABEL=""
     fi
 }
 
 save_server_config() {
     local server_name="$1"
-    local host="$2"
-    local port="$3"
-    local username="$4"
-    local password="$5"
+    local server_remark="$2"
+    local host="$3"
+    local port="$4"
+    local username="$5"
+    local password="$6"
     local encrypted_password
     local tmp_file="$SERVER_DIR/${server_name}.conf.tmp"
 
@@ -260,6 +295,7 @@ save_server_config() {
 
     {
         printf 'SERVER_NAME=%q\n' "$server_name"
+        printf 'SERVER_REMARK=%q\n' "$server_remark"
         printf 'HOST=%q\n' "$host"
         printf 'PORT=%q\n' "$port"
         printf 'USERNAME=%q\n' "$username"
@@ -272,15 +308,16 @@ save_server_config() {
 
 save_backup_config() {
     local backup_name="$1"
-    local source_folder="$2"
-    local dest_folder="$3"
-    local interval="$4"
-    local server_mode="$5"
-    local server_name="$6"
-    local host="$7"
-    local port="$8"
-    local username="$9"
-    local password="${10}"
+    local backup_remark="$2"
+    local source_folder="$3"
+    local dest_folder="$4"
+    local interval="$5"
+    local server_mode="$6"
+    local server_name="$7"
+    local host="$8"
+    local port="$9"
+    local username="${10}"
+    local password="${11}"
     local tmp_file="$CONFIG_DIR/${backup_name}.conf.tmp"
     local encrypted_password=""
 
@@ -293,6 +330,7 @@ save_backup_config() {
 
     {
         printf 'BACKUP_NAME=%q\n' "$backup_name"
+        printf 'BACKUP_REMARK=%q\n' "$backup_remark"
         printf 'SOURCE_FOLDER=%q\n' "$source_folder"
         printf 'DEST_FOLDER=%q\n' "$dest_folder"
         printf 'INTERVAL=%q\n' "$interval"
@@ -427,7 +465,7 @@ get_backups_using_server() {
     for conf in "${CONFIG_LIST[@]}"; do
         load_backup_config "$conf" || continue
         if [ "$LOADED_BACKUP_SERVER_MODE" = "profile" ] && [ "$LOADED_BACKUP_SERVER_NAME" = "$server_name" ]; then
-            USED_BACKUPS+=("$LOADED_BACKUP_NAME")
+            USED_BACKUPS+=("$(format_display_label "$LOADED_BACKUP_NAME" "$LOADED_BACKUP_REMARK")")
         fi
     done
 }
@@ -440,15 +478,17 @@ list_servers() {
     fi
 
     echo ""
-    printf "  ${BLUE}%-4s %-18s %-25s %-12s %-8s${NC}\n" "序号" "名称" "服务器" "用户名" "引用数"
-    printf "  ${BLUE}%s${NC}\n" "--------------------------------------------------------------------------------"
+    printf "  ${BLUE}%-4s %-28s %-25s %-12s %-8s${NC}\n" "序号" "备注/名称" "服务器" "用户名" "引用数"
+    printf "  ${BLUE}%s${NC}\n" "------------------------------------------------------------------------------------------------"
 
     local i=1
     for conf in "${SERVER_LIST[@]}"; do
         load_server_config "$conf" || continue
         get_backups_using_server "$LOADED_SERVER_NAME"
-        printf "  %-4s %-18s %-25s %-12s %s\n" \
-            "$i" "$LOADED_SERVER_NAME" "${LOADED_SERVER_HOST}:${LOADED_SERVER_PORT}" "$LOADED_SERVER_USERNAME" "${#USED_BACKUPS[@]}"
+        local server_label
+        server_label=$(format_display_label "$LOADED_SERVER_NAME" "$LOADED_SERVER_REMARK")
+        printf "  %-4s %-28s %-25s %-12s %s\n" \
+            "$i" "$server_label" "${LOADED_SERVER_HOST}:${LOADED_SERVER_PORT}" "$LOADED_SERVER_USERNAME" "${#USED_BACKUPS[@]}"
         ((i++))
     done
     echo ""
@@ -457,6 +497,7 @@ list_servers() {
 
 select_server_profile() {
     local current_server_name="$1"
+    local current_server_remark="$2"
     get_server_list
     if [ ${#SERVER_LIST[@]} -eq 0 ]; then
         echo -e "  ${YELLOW}[!] 服务器列表为空，请先新增服务器${NC}"
@@ -468,7 +509,9 @@ select_server_profile() {
     local prompt="  请选择服务器序号"
     local server_num=""
     if [ -n "$current_server_name" ]; then
-        prompt+=" [回车保持: ${current_server_name}]"
+        local current_label
+        current_label=$(format_display_label "$current_server_name" "$current_server_remark")
+        prompt+=" [回车保持: ${current_label}]"
     fi
     prompt+=": "
 
@@ -478,6 +521,7 @@ select_server_profile() {
         if [ -f "$current_conf" ]; then
             load_server_config "$current_conf" || return 1
             SELECTED_SERVER_NAME="$LOADED_SERVER_NAME"
+            SELECTED_SERVER_REMARK="$LOADED_SERVER_REMARK"
             SELECTED_SERVER_HOST="$LOADED_SERVER_HOST"
             SELECTED_SERVER_PORT="$LOADED_SERVER_PORT"
             SELECTED_SERVER_USERNAME="$LOADED_SERVER_USERNAME"
@@ -495,6 +539,7 @@ select_server_profile() {
     local selected_conf="${SERVER_LIST[$((server_num-1))]}"
     load_server_config "$selected_conf" || return 1
     SELECTED_SERVER_NAME="$LOADED_SERVER_NAME"
+    SELECTED_SERVER_REMARK="$LOADED_SERVER_REMARK"
     SELECTED_SERVER_HOST="$LOADED_SERVER_HOST"
     SELECTED_SERVER_PORT="$LOADED_SERVER_PORT"
     SELECTED_SERVER_USERNAME="$LOADED_SERVER_USERNAME"
@@ -550,18 +595,21 @@ prompt_manual_server_fields() {
 
     FORM_SERVER_MODE="manual"
     FORM_SERVER_NAME=""
+    FORM_SERVER_REMARK=""
 }
 
 prompt_backup_server_config() {
     local default_mode="$1"
     local current_server_name="$2"
-    local current_host="$3"
-    local current_port="$4"
-    local current_username="$5"
-    local current_password="$6"
+    local current_server_remark="$3"
+    local current_host="$4"
+    local current_port="$5"
+    local current_username="$6"
+    local current_password="$7"
 
     FORM_SERVER_MODE=""
     FORM_SERVER_NAME=""
+    FORM_SERVER_REMARK=""
     FORM_HOST=""
     FORM_PORT=""
     FORM_USERNAME=""
@@ -597,9 +645,10 @@ prompt_backup_server_config() {
             return $?
         fi
 
-        select_server_profile "$current_server_name" || return 1
+        select_server_profile "$current_server_name" "$current_server_remark" || return 1
         FORM_SERVER_MODE="profile"
         FORM_SERVER_NAME="$SELECTED_SERVER_NAME"
+        FORM_SERVER_REMARK="$SELECTED_SERVER_REMARK"
         FORM_HOST="$SELECTED_SERVER_HOST"
         FORM_PORT="$SELECTED_SERVER_PORT"
         FORM_USERNAME="$SELECTED_SERVER_USERNAME"
@@ -623,24 +672,30 @@ list_backups() {
     fi
 
     echo ""
-    printf "  ${BLUE}%-4s %-15s %-22s %-12s %-36s %-8s${NC}\n" "序号" "名称" "源路径" "服务器模式" "目标服务器" "间隔"
-    printf "  ${BLUE}%s${NC}\n" "----------------------------------------------------------------------------------------------------------------"
+    printf "  ${BLUE}%-4s %-28s %-22s %-12s %-36s %-8s${NC}\n" "序号" "备注/名称" "源路径" "服务器模式" "目标服务器" "间隔"
+    printf "  ${BLUE}%s${NC}\n" "--------------------------------------------------------------------------------------------------------------------------------"
 
     local i=1
     for conf in "${CONFIG_LIST[@]}"; do
         if resolve_backup_runtime "$conf"; then
             local mode_display="手动输入"
             local target_display="${RESOLVED_HOST}:${RESOLVED_PORT}:${RESOLVED_DEST_FOLDER}"
+            local backup_label
+            backup_label=$(format_display_label "$RESOLVED_BACKUP_NAME" "$RESOLVED_BACKUP_REMARK")
             if [ "$RESOLVED_SERVER_MODE" = "profile" ]; then
                 mode_display="服务器列表"
-                target_display="${RESOLVED_SERVER_NAME}(${RESOLVED_HOST}:${RESOLVED_PORT}):${RESOLVED_DEST_FOLDER}"
+                local server_label
+                server_label=$(format_display_label "$RESOLVED_SERVER_NAME" "$RESOLVED_SERVER_REMARK")
+                target_display="${server_label}(${RESOLVED_HOST}:${RESOLVED_PORT}):${RESOLVED_DEST_FOLDER}"
             fi
-            printf "  %-4s %-15s %-22s %-12s %-36s %s分钟\n" \
-                "$i" "$RESOLVED_BACKUP_NAME" "$RESOLVED_SOURCE_FOLDER" "$mode_display" "$target_display" "$RESOLVED_INTERVAL"
+            printf "  %-4s %-28s %-22s %-12s %-36s %s分钟\n" \
+                "$i" "$backup_label" "$RESOLVED_SOURCE_FOLDER" "$mode_display" "$target_display" "$RESOLVED_INTERVAL"
         else
             load_backup_config "$conf" || continue
-            printf "  %-4s %-15s %-22s %-12s %-36s %s分钟\n" \
-                "$i" "$LOADED_BACKUP_NAME" "$LOADED_BACKUP_SOURCE_FOLDER" "配置异常" "服务器配置缺失" "$LOADED_BACKUP_INTERVAL"
+            local backup_label
+            backup_label=$(format_display_label "$LOADED_BACKUP_NAME" "$LOADED_BACKUP_REMARK")
+            printf "  %-4s %-28s %-22s %-12s %-36s %s分钟\n" \
+                "$i" "$backup_label" "$LOADED_BACKUP_SOURCE_FOLDER" "配置异常" "服务器配置缺失" "$LOADED_BACKUP_INTERVAL"
         fi
         ((i++))
     done
@@ -832,28 +887,14 @@ do_add_server() {
     echo -e "${GREEN}========== 新增服务器 ==========${NC}"
     echo ""
 
-    read -rp "  服务器名称（英文，无空格）: " server_name
-    if [ -z "$server_name" ]; then
-        echo -e "  ${RED}[✗] 名称不能为空${NC}"
-        return
-    fi
-
-    server_name=$(sanitize_name "$server_name")
-    if [ -z "$server_name" ]; then
-        echo -e "  ${RED}[✗] 名称包含非法字符${NC}"
-        return
-    fi
-
-    if [ -f "$SERVER_DIR/${server_name}.conf" ]; then
-        echo -e "  ${RED}[✗] 服务器名称 [${server_name}] 已存在${NC}"
-        return
-    fi
-
+    read -rp "  服务器备注（可中文，可留空）: " server_remark
+    local server_name
+    server_name=$(generate_internal_name "srv" "$SERVER_DIR")
     prompt_manual_server_fields "" "22" "root" "" || return
 
     echo ""
     echo -e "  ${CYAN}--- 确认信息 ---${NC}"
-    echo -e "  服务器名称: ${GREEN}${server_name}${NC}"
+    [ -n "$server_remark" ] && echo -e "  服务器备注: ${GREEN}${server_remark}${NC}"
     echo -e "  服务器地址: ${GREEN}${FORM_HOST}:${FORM_PORT}${NC}"
     echo -e "  登录用户:   ${GREEN}${FORM_USERNAME}${NC}"
     echo ""
@@ -864,8 +905,10 @@ do_add_server() {
         return
     fi
 
-    save_server_config "$server_name" "$FORM_HOST" "$FORM_PORT" "$FORM_USERNAME" "$FORM_PASSWORD" || return
-    echo -e "  ${GREEN}[✔] 服务器 [${server_name}] 已加密保存${NC}"
+    save_server_config "$server_name" "$server_remark" "$FORM_HOST" "$FORM_PORT" "$FORM_USERNAME" "$FORM_PASSWORD" || return
+    local server_label
+    server_label=$(format_display_label "$server_name" "$server_remark")
+    echo -e "  ${GREEN}[✔] 服务器 [${server_label}] 已加密保存${NC}"
 }
 
 do_modify_server() {
@@ -891,11 +934,19 @@ do_modify_server() {
     echo -e "  ${YELLOW}提示: 直接按回车保持原值不修改${NC}"
     echo ""
 
+    local server_remark_prompt="  服务器备注（可中文，可留空）"
+    [ -n "$LOADED_SERVER_REMARK" ] && server_remark_prompt+=" [${LOADED_SERVER_REMARK}]"
+    server_remark_prompt+=": "
+    read -rp "$server_remark_prompt" new_server_remark
+    new_server_remark=${new_server_remark:-$LOADED_SERVER_REMARK}
+
     prompt_manual_server_fields "$LOADED_SERVER_HOST" "$LOADED_SERVER_PORT" "$LOADED_SERVER_USERNAME" "$current_password" || return
-    save_server_config "$LOADED_SERVER_NAME" "$FORM_HOST" "$FORM_PORT" "$FORM_USERNAME" "$FORM_PASSWORD" || return
+    save_server_config "$LOADED_SERVER_NAME" "$new_server_remark" "$FORM_HOST" "$FORM_PORT" "$FORM_USERNAME" "$FORM_PASSWORD" || return
 
     echo ""
-    echo -e "  ${GREEN}[✔] 服务器 [${LOADED_SERVER_NAME}] 修改成功！${NC}"
+    local server_label
+    server_label=$(format_display_label "$LOADED_SERVER_NAME" "$new_server_remark")
+    echo -e "  ${GREEN}[✔] 服务器 [${server_label}] 修改成功！${NC}"
 }
 
 do_delete_server() {
@@ -914,22 +965,24 @@ do_delete_server() {
     local conf="${SERVER_LIST[$((num-1))]}"
     load_server_config "$conf" || return
     get_backups_using_server "$LOADED_SERVER_NAME"
+    local server_label
+    server_label=$(format_display_label "$LOADED_SERVER_NAME" "$LOADED_SERVER_REMARK")
 
     if [ ${#USED_BACKUPS[@]} -gt 0 ]; then
-        echo -e "  ${YELLOW}[!] 服务器 [${LOADED_SERVER_NAME}] 正被以下备份任务使用:${NC}"
+        echo -e "  ${YELLOW}[!] 服务器 [${server_label}] 正被以下备份任务使用:${NC}"
         printf '    - %s\n' "${USED_BACKUPS[@]}"
         echo -e "  ${YELLOW}[!] 请先修改这些备份任务，再删除服务器配置${NC}"
         return
     fi
 
-    read -rp "  确认删除服务器 [${LOADED_SERVER_NAME}]? (y/n): " confirm
+    read -rp "  确认删除服务器 [${server_label}]? (y/n): " confirm
     if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
         echo -e "  ${YELLOW}已取消${NC}"
         return
     fi
 
     rm -f "$conf"
-    echo -e "  ${GREEN}[✔] 服务器 [${LOADED_SERVER_NAME}] 已删除${NC}"
+    echo -e "  ${GREEN}[✔] 服务器 [${server_label}] 已删除${NC}"
 }
 
 show_server_menu() {
@@ -968,21 +1021,9 @@ do_add_backup() {
     echo -e "${GREEN}========== 添加备份任务 ==========${NC}"
     echo ""
 
-    read -rp "  备份任务名称（英文，无空格）: " backup_name
-    if [ -z "$backup_name" ]; then
-        echo -e "  ${RED}[✗] 名称不能为空${NC}"
-        return
-    fi
-
-    backup_name=$(sanitize_name "$backup_name")
-    if [ -z "$backup_name" ]; then
-        echo -e "  ${RED}[✗] 名称包含非法字符${NC}"
-        return
-    fi
-    if [ -f "$CONFIG_DIR/${backup_name}.conf" ]; then
-        echo -e "  ${RED}[✗] 任务名称 [${backup_name}] 已存在${NC}"
-        return
-    fi
+    read -rp "  备份备注（可中文，可留空）: " backup_remark
+    local backup_name
+    backup_name=$(generate_internal_name "bk" "$CONFIG_DIR")
 
     read -rp "  需要备份的路径（文件或文件夹）: " source_folder
     if [ -z "$source_folder" ]; then
@@ -990,7 +1031,7 @@ do_add_backup() {
         return
     fi
 
-    prompt_backup_server_config "manual" "" "" "22" "root" "" || return
+    prompt_backup_server_config "manual" "" "" "" "22" "root" "" || return
 
     read -rp "  目标存放目录: " dest_folder
     if [ -z "$dest_folder" ]; then
@@ -1007,10 +1048,12 @@ do_add_backup() {
 
     echo ""
     echo -e "  ${CYAN}--- 确认信息 ---${NC}"
-    echo -e "  任务名称:   ${GREEN}${backup_name}${NC}"
+    [ -n "$backup_remark" ] && echo -e "  任务备注:   ${GREEN}${backup_remark}${NC}"
     echo -e "  源路径:     ${GREEN}${source_folder}${NC}"
     if [ "$FORM_SERVER_MODE" = "profile" ]; then
-        echo -e "  服务器来源: ${GREEN}服务器列表 / ${FORM_SERVER_NAME}${NC}"
+        local server_label
+        server_label=$(format_display_label "$FORM_SERVER_NAME" "$FORM_SERVER_REMARK")
+        echo -e "  服务器来源: ${GREEN}服务器列表 / ${server_label}${NC}"
     else
         echo -e "  服务器来源: ${GREEN}手动输入${NC}"
     fi
@@ -1026,7 +1069,7 @@ do_add_backup() {
         return
     fi
 
-    save_backup_config "$backup_name" "$source_folder" "$dest_folder" "$interval" "$FORM_SERVER_MODE" "$FORM_SERVER_NAME" "$FORM_HOST" "$FORM_PORT" "$FORM_USERNAME" "$FORM_PASSWORD" || return
+    save_backup_config "$backup_name" "$backup_remark" "$source_folder" "$dest_folder" "$interval" "$FORM_SERVER_MODE" "$FORM_SERVER_NAME" "$FORM_HOST" "$FORM_PORT" "$FORM_USERNAME" "$FORM_PASSWORD" || return
     generate_backup_script "$backup_name"
     add_cron_job "$backup_name" "$interval"
     add_startup_job "$backup_name"
@@ -1041,7 +1084,9 @@ do_add_backup() {
     fi
 
     echo ""
-    echo -e "  ${GREEN}[✔] 备份任务 [${backup_name}] 添加成功！${NC}"
+    local backup_label
+    backup_label=$(format_display_label "$backup_name" "$backup_remark")
+    echo -e "  ${GREEN}[✔] 备份任务 [${backup_label}] 添加成功！${NC}"
     echo -e "  ${GREEN}[✔] 已设置每 ${interval} 分钟自动备份一次${NC}"
     echo -e "  ${GREEN}[✔] 已添加服务器启动自动备份${NC}"
 }
@@ -1057,7 +1102,7 @@ do_run_backup_once() {
         return
     fi
 
-    prompt_backup_server_config "manual" "" "" "22" "root" "" || return
+    prompt_backup_server_config "manual" "" "" "" "22" "root" "" || return
 
     read -rp "  目标存放目录: " dest_folder
     if [ -z "$dest_folder" ]; then
@@ -1069,7 +1114,9 @@ do_run_backup_once() {
     echo -e "  ${CYAN}--- 确认信息 ---${NC}"
     echo -e "  源路径:     ${GREEN}${source_folder}${NC}"
     if [ "$FORM_SERVER_MODE" = "profile" ]; then
-        echo -e "  服务器来源: ${GREEN}服务器列表 / ${FORM_SERVER_NAME}${NC}"
+        local server_label
+        server_label=$(format_display_label "$FORM_SERVER_NAME" "$FORM_SERVER_REMARK")
+        echo -e "  服务器来源: ${GREEN}服务器列表 / ${server_label}${NC}"
     else
         echo -e "  服务器来源: ${GREEN}手动输入${NC}"
     fi
@@ -1122,16 +1169,18 @@ do_run_saved_backup_now() {
     local conf="${CONFIG_LIST[$((num-1))]}"
     load_backup_config "$conf" || return
     local backup_name="$LOADED_BACKUP_NAME"
+    local backup_label
+    backup_label=$(format_display_label "$LOADED_BACKUP_NAME" "$LOADED_BACKUP_REMARK")
     local log_file="${LOG_DIR}/${backup_name}.log"
 
     echo ""
-    echo -e "  ${CYAN}[*] 正在立即执行备份任务 [${backup_name}]...${NC}"
+    echo -e "  ${CYAN}[*] 正在立即执行备份任务 [${backup_label}]...${NC}"
     run_backup_task "$backup_name"
     if [ $? -eq 0 ]; then
-        echo -e "  ${GREEN}[✔] 备份任务 [${backup_name}] 执行完成！${NC}"
+        echo -e "  ${GREEN}[✔] 备份任务 [${backup_label}] 执行完成！${NC}"
         echo -e "  ${GREEN}[✔] 日志文件: ${log_file}${NC}"
     else
-        echo -e "  ${YELLOW}[!] 备份任务 [${backup_name}] 执行失败，请检查日志: ${log_file}${NC}"
+        echo -e "  ${YELLOW}[!] 备份任务 [${backup_label}] 执行失败，请检查日志: ${log_file}${NC}"
     fi
 }
 
@@ -1170,6 +1219,12 @@ do_modify_backup() {
     echo -e "  ${YELLOW}提示: 直接按回车保持原值不修改${NC}"
     echo ""
 
+    local backup_remark_prompt="  备份备注（可中文，可留空）"
+    [ -n "$LOADED_BACKUP_REMARK" ] && backup_remark_prompt+=" [${LOADED_BACKUP_REMARK}]"
+    backup_remark_prompt+=": "
+    read -rp "$backup_remark_prompt" new_backup_remark
+    new_backup_remark=${new_backup_remark:-$LOADED_BACKUP_REMARK}
+
     read -rp "  源目录 [${LOADED_BACKUP_SOURCE_FOLDER}]: " new_source
     new_source=${new_source:-$LOADED_BACKUP_SOURCE_FOLDER}
 
@@ -1183,14 +1238,16 @@ do_modify_backup() {
         return
     fi
 
-    prompt_backup_server_config "$LOADED_BACKUP_SERVER_MODE" "$LOADED_BACKUP_SERVER_NAME" "$current_host" "$current_port" "$current_username" "$current_password" || return
+    prompt_backup_server_config "$LOADED_BACKUP_SERVER_MODE" "$LOADED_BACKUP_SERVER_NAME" "$LOADED_BACKUP_SERVER_REMARK" "$current_host" "$current_port" "$current_username" "$current_password" || return
 
-    save_backup_config "$LOADED_BACKUP_NAME" "$new_source" "$new_dest" "$new_interval" "$FORM_SERVER_MODE" "$FORM_SERVER_NAME" "$FORM_HOST" "$FORM_PORT" "$FORM_USERNAME" "$FORM_PASSWORD" || return
+    save_backup_config "$LOADED_BACKUP_NAME" "$new_backup_remark" "$new_source" "$new_dest" "$new_interval" "$FORM_SERVER_MODE" "$FORM_SERVER_NAME" "$FORM_HOST" "$FORM_PORT" "$FORM_USERNAME" "$FORM_PASSWORD" || return
     generate_backup_script "$LOADED_BACKUP_NAME"
     add_cron_job "$LOADED_BACKUP_NAME" "$new_interval"
 
     echo ""
-    echo -e "  ${GREEN}[✔] 备份任务 [${LOADED_BACKUP_NAME}] 修改成功！${NC}"
+    local backup_label
+    backup_label=$(format_display_label "$LOADED_BACKUP_NAME" "$new_backup_remark")
+    echo -e "  ${GREEN}[✔] 备份任务 [${backup_label}] 修改成功！${NC}"
 }
 
 do_delete_backup() {
@@ -1208,8 +1265,10 @@ do_delete_backup() {
 
     local conf="${CONFIG_LIST[$((num-1))]}"
     load_backup_config "$conf" || return
+    local backup_label
+    backup_label=$(format_display_label "$LOADED_BACKUP_NAME" "$LOADED_BACKUP_REMARK")
 
-    read -rp "  确认删除备份任务 [${LOADED_BACKUP_NAME}]? (y/n): " confirm
+    read -rp "  确认删除备份任务 [${backup_label}]? (y/n): " confirm
     if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
         echo -e "  ${YELLOW}已取消${NC}"
         return
@@ -1221,7 +1280,7 @@ do_delete_backup() {
     rm -f "$SCRIPT_DIR/${LOADED_BACKUP_NAME}.sh"
     rm -f "$LOG_DIR/${LOADED_BACKUP_NAME}.log"
 
-    echo -e "  ${GREEN}[✔] 备份任务 [${LOADED_BACKUP_NAME}] 已删除！${NC}"
+    echo -e "  ${GREEN}[✔] 备份任务 [${backup_label}] 已删除！${NC}"
 }
 
 do_modify_schedule() {
@@ -1245,7 +1304,9 @@ do_modify_schedule() {
             load_backup_config "$conf" || continue
             sed -i "s/^INTERVAL=.*/INTERVAL=$(printf '%q' "$new_interval")/" "$conf"
             add_cron_job "$LOADED_BACKUP_NAME" "$new_interval"
-            echo -e "  ${GREEN}✔ [${LOADED_BACKUP_NAME}] → 每 ${new_interval} 分钟${NC}"
+            local backup_label
+            backup_label=$(format_display_label "$LOADED_BACKUP_NAME" "$LOADED_BACKUP_REMARK")
+            echo -e "  ${GREEN}✔ [${backup_label}] → 每 ${new_interval} 分钟${NC}"
         done
         echo ""
         echo -e "  ${GREEN}[✔] 所有任务定时已更新！${NC}"
@@ -1267,7 +1328,9 @@ do_modify_schedule() {
 
         sed -i "s/^INTERVAL=.*/INTERVAL=$(printf '%q' "$new_interval")/" "$conf"
         add_cron_job "$LOADED_BACKUP_NAME" "$new_interval"
-        echo -e "  ${GREEN}[✔] [${LOADED_BACKUP_NAME}] 定时已修改为每 ${new_interval} 分钟${NC}"
+        local backup_label
+        backup_label=$(format_display_label "$LOADED_BACKUP_NAME" "$LOADED_BACKUP_REMARK")
+        echo -e "  ${GREEN}[✔] [${backup_label}] 定时已修改为每 ${new_interval} 分钟${NC}"
     fi
 }
 
