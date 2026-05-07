@@ -1,6 +1,6 @@
 # Backup Manager
 
-![Backup Manager](https://upload-bbs.miyoushe.com/upload/2026/03/01/363490070/e4f9fbad785cd0a3b53d88a9b21518ed_6185428099354103731.jpeg)
+![Backup Manager](https://upload-bbs.miyoushe.com/upload/2026/02/28/363490070/c82aef4f11f8db53bf0fb21c4668da82_4320865895019498286.jpeg)
 
 一个基于 Rsync 的自动备份管理工具，支持增量备份、定时备份、自定义 SSH 端口、开机自启、远程自动安装 rsync 等功能。
 
@@ -18,12 +18,7 @@
 
 ## 一键安装
 
-国内服务器：
-```bash
-bash <(curl -sL https://gitee.com/Assute/backup_manager/raw/master/backup_manager.sh)
-```
-
-国外服务器：
+GitHub：
 ```bash
 bash <(curl -sL https://raw.githubusercontent.com/Assute/backup_manager/main/backup_manager.sh)
 ```
