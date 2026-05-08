@@ -1033,7 +1033,8 @@ do_add_backup() {
 
     prompt_backup_server_config "manual" "" "" "" "22" "root" "" || return
 
-    read -rp "  目标存放目录: " dest_folder
+    read -rp "  目标存放目录 [默认: 原路径]: " dest_folder
+    dest_folder=${dest_folder:-$source_folder}
     if [ -z "$dest_folder" ]; then
         echo -e "  ${RED}[✗] 目标目录不能为空${NC}"
         return
@@ -1104,7 +1105,8 @@ do_run_backup_once() {
 
     prompt_backup_server_config "manual" "" "" "" "22" "root" "" || return
 
-    read -rp "  目标存放目录: " dest_folder
+    read -rp "  目标存放目录 [默认: 原路径]: " dest_folder
+    dest_folder=${dest_folder:-$source_folder}
     if [ -z "$dest_folder" ]; then
         echo -e "  ${RED}[✗] 目标目录不能为空${NC}"
         return
@@ -1443,7 +1445,9 @@ do_update_script() {
     new_version=${new_version:-未知版本}
 
     echo -e "  ${GREEN}[✔] 脚本更新成功！当前版本: ${new_version}${NC}"
-    echo -e "  ${YELLOW}[!] 建议退出后重新运行脚本，以加载最新代码${NC}"
+    echo -e "  ${CYAN}[*] 正在自动重启脚本...${NC}"
+    sleep 1
+    exec bash "$INSTALLED_SCRIPT_PATH"
 }
 
 show_menu() {
