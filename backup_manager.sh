@@ -95,6 +95,16 @@ format_display_label() {
     fi
 }
 
+build_rsync_source_path() {
+    local source_path="$1"
+
+    if [ -d "$source_path" ]; then
+        printf '%s/' "${source_path%/}"
+    else
+        printf '%s' "$source_path"
+    fi
+}
+
 generate_internal_name() {
     local prefix="$1"
     local target_dir="$2"
@@ -788,6 +798,16 @@ run_backup_runtime_flow() {
         return 1
     fi
 
+    if [ ! -e "$source_folder" ]; then
+        rotate_log_if_needed "$log_file"
+        log_message "$log_file" "备份失败：源路径不存在 ${source_folder}"
+        echo -e "${RED}[✗] 源路径不存在: ${source_folder}${NC}"
+        return 1
+    fi
+
+    local rsync_source
+    rsync_source=$(build_rsync_source_path "$source_folder")
+
     rotate_log_if_needed "$log_file"
     log_message "$log_file" "开始备份 [${task_label}] ${source_folder} → ${username}@${host}:${port}:${dest_folder}"
     log_message "$log_file" "检查远程 rsync..."
@@ -829,7 +849,7 @@ REMOTE_INSTALL
     log_message "$log_file" "开始传输文件..."
     sshpass -e rsync -avz --progress \
         -e "ssh -p $port -o StrictHostKeyChecking=no" \
-        "$source_folder" \
+        "$rsync_source" \
         "$username@$host:$dest_folder" \
         >> "$log_file" 2>&1
 
