@@ -14,6 +14,7 @@ CONFIG_DIR="${SCRIPT_BASE_DIR}/backup_configs"
 SCRIPT_DIR="${SCRIPT_BASE_DIR}/backup_scripts"
 LOG_DIR="${SCRIPT_BASE_DIR}/backup_logs"
 SERVER_DIR="${SCRIPT_BASE_DIR}/server_configs"
+LOCK_DIR="${SCRIPT_BASE_DIR}/backup_locks"
 SECRET_KEY_FILE="${SCRIPT_BASE_DIR}/.backup_secret.key"
 INSTALLED_SCRIPT_PATH="${SCRIPT_BASE_DIR}/backup_manager.sh"
 UPDATE_URL_GITHUB="https://raw.githubusercontent.com/Assute/backup_manager/main/backup_manager.sh"
@@ -29,7 +30,7 @@ NC='\033[0m'
 # ==================== 通用工具 ====================
 
 ensure_directories() {
-    mkdir -p "$CONFIG_DIR" "$SCRIPT_DIR" "$LOG_DIR" "$SERVER_DIR"
+    mkdir -p "$CONFIG_DIR" "$SCRIPT_DIR" "$LOG_DIR" "$SERVER_DIR" "$LOCK_DIR"
 }
 
 ensure_secret_key() {
@@ -103,6 +104,80 @@ build_rsync_source_path() {
     else
         printf '%s' "$source_path"
     fi
+}
+
+normalize_compare_path() {
+    local path="$1"
+    path="${path%/}"
+    if [ -z "$path" ]; then
+        path="/"
+    fi
+    printf '%s' "$path"
+}
+
+is_local_host() {
+    local host="$1"
+    local current_host=""
+    local short_host=""
+
+    case "$host" in
+        localhost|127.0.0.1|::1)
+            return 0
+            ;;
+    esac
+
+    current_host=$(hostname 2>/dev/null || true)
+    short_host="${current_host%%.*}"
+
+    case "$host" in
+        "$current_host"|"$short_host")
+            return 0
+            ;;
+    esac
+
+    return 1
+}
+
+acquire_backup_lock() {
+    local task_label="$1"
+    local lock_name
+    lock_name=$(sanitize_name "$task_label")
+    [ -n "$lock_name" ] || lock_name="backup_task"
+
+    local lock_dir="${LOCK_DIR}/${lock_name}.lock"
+    local pid_file="${lock_dir}/pid"
+    local old_pid=""
+
+    mkdir -p "$LOCK_DIR"
+
+    if mkdir "$lock_dir" 2>/dev/null; then
+        printf '%s\n' "$$" > "$pid_file"
+        printf '%s' "$lock_dir"
+        return 0
+    fi
+
+    if [ -f "$pid_file" ]; then
+        old_pid=$(cat "$pid_file" 2>/dev/null || true)
+        if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
+            echo -e "${YELLOW}[!] 备份任务 [${task_label}] 已在运行中，跳过本次执行${NC}" >&2
+            return 1
+        fi
+    fi
+
+    rm -rf "$lock_dir"
+    if mkdir "$lock_dir" 2>/dev/null; then
+        printf '%s\n' "$$" > "$pid_file"
+        printf '%s' "$lock_dir"
+        return 0
+    fi
+
+    echo -e "${RED}[✗] 无法创建备份锁，请检查目录权限: ${lock_dir}${NC}" >&2
+    return 1
+}
+
+release_backup_lock() {
+    local lock_dir="$1"
+    [ -n "$lock_dir" ] && rm -rf "$lock_dir"
 }
 
 generate_internal_name() {
@@ -805,8 +880,34 @@ run_backup_runtime_flow() {
         return 1
     fi
 
+    local normalized_source
+    local normalized_dest
+    normalized_source=$(normalize_compare_path "$source_folder")
+    normalized_dest=$(normalize_compare_path "$dest_folder")
+
+    if is_local_host "$host"; then
+        if [ "$normalized_source" = "$normalized_dest" ]; then
+            rotate_log_if_needed "$log_file"
+            log_message "$log_file" "备份失败：本机备份时目标路径不能与源路径相同"
+            echo -e "${RED}[✗] 本机备份时，目标路径不能与源路径相同: ${normalized_source}${NC}"
+            return 1
+        fi
+
+        case "$normalized_dest" in
+            "${normalized_source}"/*)
+                rotate_log_if_needed "$log_file"
+                log_message "$log_file" "备份失败：本机备份时目标路径不能位于源路径内部"
+                echo -e "${RED}[✗] 本机备份时，目标路径不能位于源路径内部: ${normalized_dest}${NC}"
+                return 1
+                ;;
+        esac
+    fi
+
     local rsync_source
+    local lock_dir=""
+    local result=0
     rsync_source=$(build_rsync_source_path "$source_folder")
+    lock_dir=$(acquire_backup_lock "$task_label") || return 1
 
     rotate_log_if_needed "$log_file"
     log_message "$log_file" "开始备份 [${task_label}] ${source_folder} → ${username}@${host}:${port}:${dest_folder}"
@@ -836,6 +937,7 @@ REMOTE_INSTALL
         else
             log_message "$log_file" "远程 rsync 安装失败，请手动检查"
             unset SSHPASS
+            release_backup_lock "$lock_dir"
             return 1
         fi
     else
@@ -853,7 +955,7 @@ REMOTE_INSTALL
         "$username@$host:$dest_folder" \
         >> "$log_file" 2>&1
 
-    local result=$?
+    result=$?
     if [ $result -eq 0 ]; then
         log_message "$log_file" "备份完成"
     else
@@ -861,6 +963,7 @@ REMOTE_INSTALL
     fi
 
     unset SSHPASS
+    release_backup_lock "$lock_dir"
     return $result
 }
 
