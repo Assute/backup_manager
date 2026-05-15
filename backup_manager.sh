@@ -194,6 +194,32 @@ generate_internal_name() {
     done
 }
 
+get_real_path() {
+    local path="$1"
+    if command -v readlink &>/dev/null; then
+        readlink -f "$path" 2>/dev/null || printf '%s' "$path"
+    else
+        printf '%s' "$path"
+    fi
+}
+
+sync_script_to_installed_path() {
+    local source_script="$1"
+    [ -n "$source_script" ] || return 1
+    [ -f "$source_script" ] || return 1
+
+    local source_real
+    local installed_real
+    source_real=$(get_real_path "$source_script")
+    installed_real=$(get_real_path "$INSTALLED_SCRIPT_PATH")
+
+    if [ "$source_real" != "$installed_real" ]; then
+        cp "$source_script" "$INSTALLED_SCRIPT_PATH"
+        chmod +x "$INSTALLED_SCRIPT_PATH"
+        echo -e "${GREEN}[✔] 脚本已覆盖安装到 ${INSTALLED_SCRIPT_PATH}${NC}"
+    fi
+}
+
 download_remote_script() {
     local target_file="$1"
     local success=1
@@ -1466,29 +1492,34 @@ ensure_script_installed() {
 
     local current_script="${BASH_SOURCE[0]}"
     if [ -n "$current_script" ] && [ -f "$current_script" ]; then
-        local current_real="$current_script"
-        local installed_real="$INSTALLED_SCRIPT_PATH"
-        if command -v readlink &>/dev/null; then
-            current_real=$(readlink -f "$current_script" 2>/dev/null || printf '%s' "$current_script")
-            installed_real=$(readlink -f "$INSTALLED_SCRIPT_PATH" 2>/dev/null || printf '%s' "$INSTALLED_SCRIPT_PATH")
-        fi
-
-        if [ "$current_real" != "$installed_real" ]; then
-            cp "$current_script" "$INSTALLED_SCRIPT_PATH"
-            chmod +x "$INSTALLED_SCRIPT_PATH"
-            echo -e "${GREEN}[✔] 脚本已同步到 ${INSTALLED_SCRIPT_PATH}${NC}"
-        fi
+        sync_script_to_installed_path "$current_script"
         return
     fi
 
-    if [ ! -f "$INSTALLED_SCRIPT_PATH" ]; then
-        echo -e "${CYAN}[*] 保存脚本到 ${INSTALLED_SCRIPT_PATH}...${NC}"
-        if ! download_remote_script "$INSTALLED_SCRIPT_PATH"; then
+    echo -e "${CYAN}[*] 正在覆盖安装最新脚本到 ${INSTALLED_SCRIPT_PATH}...${NC}"
+    if ! download_remote_script "$INSTALLED_SCRIPT_PATH"; then
             echo -e "${RED}[✗] 脚本下载失败，请检查网络或更新地址${NC}"
             return 1
-        fi
-        chmod +x "$INSTALLED_SCRIPT_PATH"
-        echo -e "${GREEN}[✔] 脚本已保存${NC}"
+    fi
+    chmod +x "$INSTALLED_SCRIPT_PATH"
+    echo -e "${GREEN}[✔] 脚本已覆盖安装${NC}"
+}
+
+relaunch_from_installed_script_if_needed() {
+    local current_script="${BASH_SOURCE[0]}"
+    local current_real
+    local installed_real
+
+    [ -n "$current_script" ] || return 0
+    [ -f "$current_script" ] || return 0
+    [ "${BACKUP_RELAUNCHED:-0}" = "1" ] && return 0
+
+    current_real=$(get_real_path "$current_script")
+    installed_real=$(get_real_path "$INSTALLED_SCRIPT_PATH")
+
+    if [ "$current_real" != "$installed_real" ]; then
+        export BACKUP_RELAUNCHED=1
+        exec bash "$INSTALLED_SCRIPT_PATH" "$@"
     fi
 }
 
@@ -1627,6 +1658,7 @@ main() {
     check_dependencies
     ensure_script_installed || exit 1
     install_shortcut
+    relaunch_from_installed_script_if_needed "$@"
 
     while true; do
         show_menu
