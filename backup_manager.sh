@@ -1,12 +1,12 @@
 #!/bin/bash
 
 # ================================================
-# 备份管理工具 v4.0
+# 备份管理工具 v4.1
 # 功能: 添加/修改/删除Rsync备份任务, 定时管理, 服务器列表管理
 # 新增: 服务器凭据加密保存，可在添加备份时直接选择服务器列表
 # ================================================
 
-VERSION="v4.0"
+VERSION="v4.1"
 
 # 脚本所在目录
 SCRIPT_BASE_DIR="/opt/backup"
@@ -1136,27 +1136,34 @@ do_delete_server() {
 
 show_server_menu() {
     echo ""
-    echo -e "${BLUE}╔═══════════════════════════╗${NC}"
-    echo -e "${BLUE}║     ${CYAN}服务器管理${BLUE}         ║${NC}"
-    echo -e "${BLUE}╠═══════════════════════════╣${NC}"
-    echo -e "${BLUE}║  ${GREEN}1.${NC} 新增服务器          ${BLUE}║${NC}"
-    echo -e "${BLUE}║  ${GREEN}2.${NC} 修改服务器          ${BLUE}║${NC}"
-    echo -e "${BLUE}║  ${GREEN}3.${NC} 删除服务器          ${BLUE}║${NC}"
-    echo -e "${BLUE}║  ${GREEN}4.${NC} 查看服务器列表      ${BLUE}║${NC}"
-    echo -e "${BLUE}║  ${RED}0.${NC} 返回上级菜单        ${BLUE}║${NC}"
-    echo -e "${BLUE}╚═══════════════════════════╝${NC}"
+    echo -e "${BLUE}╔══════════════════════════════╗${NC}"
+    echo -e "${BLUE}║  ${CYAN}服务器管理${BLUE}                  ║${NC}"
+    echo -e "${BLUE}╠══════════════════════════════╣${NC}"
+    echo -e "${BLUE}║                              ║${NC}"
+    echo -e "${BLUE}║  ${GREEN}1.${NC} 新增服务器               ${BLUE}║${NC}"
+    echo -e "${BLUE}║  ${GREEN}2.${NC} 修改服务器               ${BLUE}║${NC}"
+    echo -e "${BLUE}║  ${GREEN}3.${NC} 删除服务器               ${BLUE}║${NC}"
+    echo -e "${BLUE}║  ${GREEN}4.${NC} 查看服务器列表           ${BLUE}║${NC}"
+    echo -e "${BLUE}║  ${RED}0.${NC} 返回上级菜单             ${BLUE}║${NC}"
+    echo -e "${BLUE}║                              ║${NC}"
+    echo -e "${BLUE}╚══════════════════════════════╝${NC}"
     echo ""
 }
 
 do_server_management() {
     while true; do
+        clear
         show_server_menu
         read -rp "  请选择操作 [0-4]: " choice
         case "$choice" in
             1) do_add_server ;;
             2) do_modify_server ;;
             3) do_delete_server ;;
-            4) list_servers ;;
+            4)
+                clear
+                list_servers
+                read -rp "  按回车返回上级菜单..." _
+                ;;
             0) return ;;
             *) echo -e "  ${RED}[✗] 无效选项，请输入 0-4${NC}" ;;
         esac
@@ -1661,6 +1668,7 @@ main() {
     relaunch_from_installed_script_if_needed "$@"
 
     while true; do
+        clear
         show_menu
         read -rp "  请选择操作 [0-8]: " choice
         case "$choice" in
