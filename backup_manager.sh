@@ -1,12 +1,12 @@
 #!/bin/bash
 
 # ================================================
-# 备份管理工具 v4.1
+# 备份管理工具 v4.2
 # 功能: 添加/修改/删除Rsync备份任务, 定时管理, 服务器列表管理
 # 新增: 服务器凭据加密保存，可在添加备份时直接选择服务器列表
 # ================================================
 
-VERSION="v4.1"
+VERSION="v4.2"
 
 # 脚本所在目录
 SCRIPT_BASE_DIR="/opt/backup"
@@ -240,6 +240,13 @@ download_remote_script() {
     return $success
 }
 
+get_script_version() {
+    local script_file="$1"
+    [ -f "$script_file" ] || return 1
+
+    grep -E '^VERSION=' "$script_file" 2>/dev/null | head -n1 | cut -d'"' -f2
+}
+
 rotate_log_if_needed() {
     local log_file="$1"
     local max_log_size=5242880
@@ -257,6 +264,18 @@ log_message() {
     local log_file="$1"
     local message="$2"
     echo "$(date '+%Y-%m-%d %H:%M:%S') - ${message}" >> "$log_file"
+}
+
+log_command_output() {
+    local log_file="$1"
+    local prefix="$2"
+    local output="$3"
+
+    [ -n "$output" ] || return 0
+
+    while IFS= read -r line; do
+        [ -n "$line" ] && log_message "$log_file" "${prefix}${line}"
+    done <<< "$output"
 }
 
 # ==================== 配置读写 ====================
@@ -932,6 +951,19 @@ run_backup_runtime_flow() {
     local rsync_source
     local lock_dir=""
     local result=0
+    local ssh_opts=(
+        -p "$port"
+        -o StrictHostKeyChecking=no
+        -o ConnectTimeout=15
+        -o BatchMode=no
+        -o PreferredAuthentications=password
+        -o PubkeyAuthentication=no
+        -o NumberOfPasswordPrompts=1
+    )
+    local remote_check_output=""
+    local remote_check_status=0
+    local remote_install_output=""
+    local remote_install_status=0
     rsync_source=$(build_rsync_source_path "$source_folder")
     lock_dir=$(acquire_backup_lock "$task_label") || return 1
 
@@ -941,42 +973,66 @@ run_backup_runtime_flow() {
 
     export SSHPASS="$password"
 
-    sshpass -e ssh -p "$port" -o StrictHostKeyChecking=no "$username@$host" "command -v rsync" &>/dev/null
-    if [ $? -ne 0 ]; then
+    remote_check_output=$(sshpass -e ssh "${ssh_opts[@]}" "$username@$host" "command -v rsync" 2>&1)
+    remote_check_status=$?
+    if [ $remote_check_status -ne 0 ]; then
+        log_command_output "$log_file" "远程 rsync 检查输出: " "$remote_check_output"
+
+        if [ $remote_check_status -ne 127 ]; then
+            log_message "$log_file" "远程连接或命令执行失败，不判定为 rsync 未安装 (退出码: ${remote_check_status})"
+            unset SSHPASS
+            release_backup_lock "$lock_dir"
+            return 1
+        fi
+
         log_message "$log_file" "远程未安装 rsync，正在安装..."
 
-        sshpass -e ssh -p "$port" -o StrictHostKeyChecking=no "$username@$host" <<'REMOTE_INSTALL'
+        remote_install_output=$(sshpass -e ssh "${ssh_opts[@]}" "$username@$host" <<'REMOTE_INSTALL' 2>&1
 if command -v apt-get &>/dev/null; then
-    apt-get update -qq && apt-get install -y rsync &>/dev/null
+    DEBIAN_FRONTEND=noninteractive apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y rsync
 elif command -v yum &>/dev/null; then
-    yum install -y rsync &>/dev/null
+    yum install -y rsync
 elif command -v dnf &>/dev/null; then
-    dnf install -y rsync &>/dev/null
+    dnf install -y rsync
 elif command -v apk &>/dev/null; then
-    apk add rsync &>/dev/null
+    apk add rsync
+else
+    echo "未找到支持的包管理器"
+    exit 1
 fi
 REMOTE_INSTALL
+)
+        remote_install_status=$?
+        log_command_output "$log_file" "远程 rsync 安装输出: " "$remote_install_output"
+        if [ $remote_install_status -ne 0 ]; then
+            log_message "$log_file" "远程 rsync 安装命令失败 (退出码: ${remote_install_status})"
+            unset SSHPASS
+            release_backup_lock "$lock_dir"
+            return 1
+        fi
 
-        sshpass -e ssh -p "$port" -o StrictHostKeyChecking=no "$username@$host" "command -v rsync" &>/dev/null
-        if [ $? -eq 0 ]; then
+        remote_check_output=$(sshpass -e ssh "${ssh_opts[@]}" "$username@$host" "command -v rsync" 2>&1)
+        remote_check_status=$?
+        if [ $remote_check_status -eq 0 ]; then
             log_message "$log_file" "远程 rsync 安装成功"
         else
-            log_message "$log_file" "远程 rsync 安装失败，请手动检查"
+            log_command_output "$log_file" "远程 rsync 复查输出: " "$remote_check_output"
+            log_message "$log_file" "远程 rsync 安装后仍不可用，请手动检查 (退出码: ${remote_check_status})"
             unset SSHPASS
             release_backup_lock "$lock_dir"
             return 1
         fi
     else
-        log_message "$log_file" "远程已安装 rsync"
+        log_message "$log_file" "远程已安装 rsync: ${remote_check_output}"
     fi
 
     log_message "$log_file" "检查远程目录..."
-    sshpass -e ssh -p "$port" -o StrictHostKeyChecking=no "$username@$host" \
+    sshpass -e ssh "${ssh_opts[@]}" "$username@$host" \
         "mkdir -p \"$dest_folder\" && chmod 755 \"$dest_folder\"" &>/dev/null
 
     log_message "$log_file" "开始传输文件..."
     sshpass -e rsync -avz --progress \
-        -e "ssh -p $port -o StrictHostKeyChecking=no" \
+        -e "ssh -p $port -o StrictHostKeyChecking=no -o ConnectTimeout=15 -o BatchMode=no -o PreferredAuthentications=password -o PubkeyAuthentication=no -o NumberOfPasswordPrompts=1" \
         "$rsync_source" \
         "$username@$host:$dest_folder" \
         >> "$log_file" 2>&1
@@ -1498,7 +1554,17 @@ ensure_script_installed() {
     ensure_directories
 
     local current_script="${BASH_SOURCE[0]}"
+    local current_version=""
+    local installed_version=""
+
+    current_version=$(get_script_version "$current_script" 2>/dev/null || true)
+    installed_version=$(get_script_version "$INSTALLED_SCRIPT_PATH" 2>/dev/null || true)
+
     if [ -n "$current_script" ] && [ -f "$current_script" ]; then
+        if [ -n "$current_version" ] && [ "$current_version" = "$installed_version" ]; then
+            return 0
+        fi
+
         sync_script_to_installed_path "$current_script"
         return
     fi
@@ -1516,10 +1582,19 @@ relaunch_from_installed_script_if_needed() {
     local current_script="${BASH_SOURCE[0]}"
     local current_real
     local installed_real
+    local current_version=""
+    local installed_version=""
 
     [ -n "$current_script" ] || return 0
     [ -f "$current_script" ] || return 0
     [ "${BACKUP_RELAUNCHED:-0}" = "1" ] && return 0
+
+    current_version=$(get_script_version "$current_script" 2>/dev/null || true)
+    installed_version=$(get_script_version "$INSTALLED_SCRIPT_PATH" 2>/dev/null || true)
+
+    if [ -n "$current_version" ] && [ "$current_version" = "$installed_version" ]; then
+        return 0
+    fi
 
     current_real=$(get_real_path "$current_script")
     installed_real=$(get_real_path "$INSTALLED_SCRIPT_PATH")
@@ -1693,4 +1768,6 @@ main() {
     done
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi
