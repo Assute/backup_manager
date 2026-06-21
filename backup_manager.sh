@@ -1,12 +1,12 @@
 #!/bin/bash
 
 # ================================================
-# 备份管理工具 v4.2
+# 备份管理工具 v4.3
 # 功能: 添加/修改/删除Rsync备份任务, 定时管理, 服务器列表管理
 # 新增: 服务器凭据加密保存，可在添加备份时直接选择服务器列表
 # ================================================
 
-VERSION="v4.2"
+VERSION="v4.3"
 
 # 脚本所在目录
 SCRIPT_BASE_DIR="/opt/backup"
@@ -113,6 +113,23 @@ normalize_compare_path() {
         path="/"
     fi
     printf '%s' "$path"
+}
+
+cleanup_known_host_entry() {
+    local host="$1"
+    local port="$2"
+    local known_hosts_file="${HOME}/.ssh/known_hosts"
+    local target=""
+
+    [ -f "$known_hosts_file" ] || return 0
+
+    if [ "$port" = "22" ]; then
+        target="$host"
+    else
+        target="[$host]:$port"
+    fi
+
+    ssh-keygen -f "$known_hosts_file" -R "$target" &>/dev/null || true
 }
 
 is_local_host() {
@@ -964,6 +981,7 @@ run_backup_runtime_flow() {
     local remote_check_status=0
     local remote_install_output=""
     local remote_install_status=0
+    local host_key_retry_done=0
     rsync_source=$(build_rsync_source_path "$source_folder")
     lock_dir=$(acquire_backup_lock "$task_label") || return 1
 
@@ -978,16 +996,28 @@ run_backup_runtime_flow() {
     if [ $remote_check_status -ne 0 ]; then
         log_command_output "$log_file" "远程 rsync 检查输出: " "$remote_check_output"
 
-        if [ $remote_check_status -ne 127 ]; then
-            log_message "$log_file" "远程连接或命令执行失败，不判定为 rsync 未安装 (退出码: ${remote_check_status})"
-            unset SSHPASS
-            release_backup_lock "$lock_dir"
-            return 1
+        if [ $host_key_retry_done -eq 0 ] && printf '%s' "$remote_check_output" | grep -qiE 'REMOTE HOST IDENTIFICATION HAS CHANGED|host key verification failed|Offending .*known_hosts'; then
+            log_message "$log_file" "检测到远程主机密钥变化，正在清理旧 known_hosts 记录并重试..."
+            cleanup_known_host_entry "$host" "$port"
+            host_key_retry_done=1
+            remote_check_output=$(sshpass -e ssh "${ssh_opts[@]}" "$username@$host" "command -v rsync" 2>&1)
+            remote_check_status=$?
+            if [ $remote_check_status -eq 0 ]; then
+                log_message "$log_file" "远程主机密钥已更新，重新连接成功"
+            fi
         fi
 
-        log_message "$log_file" "远程未安装 rsync，正在安装..."
+        if [ $remote_check_status -ne 0 ]; then
+            if [ $remote_check_status -ne 127 ]; then
+                log_message "$log_file" "远程连接或命令执行失败，不判定为 rsync 未安装 (退出码: ${remote_check_status})"
+                unset SSHPASS
+                release_backup_lock "$lock_dir"
+                return 1
+            fi
 
-        remote_install_output=$(sshpass -e ssh "${ssh_opts[@]}" "$username@$host" <<'REMOTE_INSTALL' 2>&1
+            log_message "$log_file" "远程未安装 rsync，正在安装..."
+
+            remote_install_output=$(sshpass -e ssh "${ssh_opts[@]}" "$username@$host" <<'REMOTE_INSTALL' 2>&1
 if command -v apt-get &>/dev/null; then
     DEBIAN_FRONTEND=noninteractive apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y rsync
 elif command -v yum &>/dev/null; then
@@ -1002,25 +1032,26 @@ else
 fi
 REMOTE_INSTALL
 )
-        remote_install_status=$?
-        log_command_output "$log_file" "远程 rsync 安装输出: " "$remote_install_output"
-        if [ $remote_install_status -ne 0 ]; then
-            log_message "$log_file" "远程 rsync 安装命令失败 (退出码: ${remote_install_status})"
-            unset SSHPASS
-            release_backup_lock "$lock_dir"
-            return 1
-        fi
+            remote_install_status=$?
+            log_command_output "$log_file" "远程 rsync 安装输出: " "$remote_install_output"
+            if [ $remote_install_status -ne 0 ]; then
+                log_message "$log_file" "远程 rsync 安装命令失败 (退出码: ${remote_install_status})"
+                unset SSHPASS
+                release_backup_lock "$lock_dir"
+                return 1
+            fi
 
-        remote_check_output=$(sshpass -e ssh "${ssh_opts[@]}" "$username@$host" "command -v rsync" 2>&1)
-        remote_check_status=$?
-        if [ $remote_check_status -eq 0 ]; then
-            log_message "$log_file" "远程 rsync 安装成功"
-        else
-            log_command_output "$log_file" "远程 rsync 复查输出: " "$remote_check_output"
-            log_message "$log_file" "远程 rsync 安装后仍不可用，请手动检查 (退出码: ${remote_check_status})"
-            unset SSHPASS
-            release_backup_lock "$lock_dir"
-            return 1
+            remote_check_output=$(sshpass -e ssh "${ssh_opts[@]}" "$username@$host" "command -v rsync" 2>&1)
+            remote_check_status=$?
+            if [ $remote_check_status -eq 0 ]; then
+                log_message "$log_file" "远程 rsync 安装成功"
+            else
+                log_command_output "$log_file" "远程 rsync 复查输出: " "$remote_check_output"
+                log_message "$log_file" "远程 rsync 安装后仍不可用，请手动检查 (退出码: ${remote_check_status})"
+                unset SSHPASS
+                release_backup_lock "$lock_dir"
+                return 1
+            fi
         fi
     else
         log_message "$log_file" "远程已安装 rsync: ${remote_check_output}"
